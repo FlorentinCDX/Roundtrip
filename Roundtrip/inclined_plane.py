@@ -87,13 +87,13 @@ def model(observed_data):
     mu_prior = Uniform(0.0, 1.0)
     mu = pyro.sample("mu", mu_prior)
 
-    """def observe_T(T_obs, obs_name):
+    def observe_T(T_obs, obs_name):
         T_simulated = simulate(mu)
         T_obs_dist = Normal(T_simulated, torch.tensor(time_measurement_sigma))
         pyro.sample(obs_name, T_obs_dist, obs=T_obs)
 
     for i, T_obs in enumerate(observed_data):
-        observe_T(T_obs, "obs_%d" % i)"""
+        observe_T(T_obs, "obs_%d" % i)
 
     return mu
 

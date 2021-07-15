@@ -97,29 +97,36 @@ class Generator_(nn.Module):
         - latent_dim (int): Dimention of the latent space (Ex: 100)
         - out_shape (tuple): Shape of the output targeted data (Ex: (10, 10))
     """   
-    def __init__(self, latent_dim, out_shape):
+    def __init__(self, latent_dim, out_shape, n_layers=4, n_units=512):
         super(Generator_, self).__init__()
         self.out_shape = out_shape
+        if (type(out_shape) is tuple and len(out_shape) > 1):
+            out = int(np.prod(out_shape))
+            self.tag = 1
+        else:
+            self.tag = 0
+            out = int(out_shape)
 
         def block(in_feat, out_feat, normalize=True):
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
                 layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            layers.append(nn.LeakyReLU())
             return layers
 
-        self.model = nn.Sequential(
-            *block(latent_dim, 128, normalize=False),
-            *block(128, 256),
-            *block(256, 512),
-            *block(512, 1024),
-            nn.Linear(1024, int(np.prod(out_shape))),
-            nn.Tanh(),
-        )
+        modules = nn.Sequential(*block(latent_dim, n_units, normalize=False))
+
+        for i in range(n_layers):
+            modules.add_module('linear_{}'.format(i), nn.Linear(n_units, n_units))
+            modules.add_module('leakyRel_{}'.format(i), nn.LeakyReLU())
+
+        modules.add_module('linear_{}'.format(n_layers+1), nn.Linear(n_units, out))
+        self.model = modules
 
     def forward(self, z):
         out = self.model(z)
-        out = out.view(out.size(0), *self.out_shape)
+        if self.tag:
+            out = out.view(out.size(0), *self.out_shape)
         return out
 
 
@@ -130,21 +137,30 @@ class Discriminator_(nn.Module):
     Initialisation input:
         - inp_shape (tuple) : Tuple representing the shape of the inputs (Ex: (10, 10)
     """
-    def __init__(self, inp_shape):
+    def __init__(self, inp_shape, n_layers=4, n_units=512):
         super(Discriminator_, self).__init__()
 
-        self.model = nn.Sequential(
-            nn.Linear(int(np.prod(inp_shape)), 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-            nn.Sigmoid(),
-        )
+        if (type(inp_shape) is tuple and len(inp_shape) > 1):
+            inp = int(np.prod(inp_shape))
+            self.tag = 1
+        else:
+            self.tag = 0
+            inp = int(inp_shape)
+        
+        modules = nn.Sequential()
+        modules.add_module('linear', nn.Linear(inp, n_units))
+        modules.add_module('leakyRelu', nn.LeakyReLU())
+        for i in range(n_layers):
+            modules.add_module('linear_{}'.format(i), nn.Linear(n_units, n_units))
+            modules.add_module('tanh_{}'.format(i), nn.Tanh())
+        
+        modules.add_module('linear_{}'.format(n_layers+1), nn.Linear(n_units, 1))
+        self.model = modules
 
     def forward(self, img):
-        img_flat = img.view(img.size(0), -1)
-        validity = self.model(img_flat)
+        if self.tag:
+            img = img.view(img.size(0), -1)
+        validity = self.model(img)
 
         return validity
 
