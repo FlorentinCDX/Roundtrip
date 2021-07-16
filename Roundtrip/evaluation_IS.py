@@ -6,6 +6,8 @@ import sampler
 import numpy as np
 import math 
 import argparse
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 def load(data, g_net, h_net):
         g_net.load_state_dict(torch.load('model_saved/g_net_{}'.format(data)))
@@ -25,7 +27,8 @@ class ImportanceSampling(object):
         self.df = df
         self.scale = scale
         self.q = torch.distributions.studentT.StudentT(df, loc=self.mean, scale=scale)
-        
+        testq = self.q.sample()
+
     def sample_q(self):
         return self.q.rsample(torch.Size([self.N]))
     
@@ -57,9 +60,8 @@ class ImportanceSampling(object):
         else:
             return 1/torch.pow(torch.sqrt(2*torch.Tensor([np.pi])),self.dy) * torch.exp(-torch.norm(self.y-g_z, dim=1)/(2.*self.sd**2))
 
-    def evaluate(self, z=None,log = False):
-        if not z:
-            z = self.sample_q()
+    def evaluate(self, log = False):
+        z = self.sample_q()
         w = self.weights(z, log)
         prob_y_given_x = self.prob_y_given_x(z, log)
         if log:
@@ -78,13 +80,17 @@ def create_2d_grid_data(x1_min, x1_max, x2_min, x2_max,n=100):
 
 def visualization_2d(x1_min, x1_max, x2_min, x2_max, sd_y, scale, n=100):
     v1, v2, data_grid = create_2d_grid_data(x1_min, x1_max, x2_min, x2_max,n)
-    py = IS.evaluate(data_grid)
+    py = []
+    for i in tqdm(data_grid):
+        IS = ImportanceSampling(g_net, h_net, torch.Tensor(i), dx = args.dx, dy = args.dy, N=args.N)
+        py.append(IS.evaluate().detach().numpy())
+    py = np.array(py)
     py = py.reshape((n,n))
     plt.figure()
     plt.rcParams.update({'font.size': 22})
-    plt.imshow(py, extent=[v1.min(), v1.max(), v2.min(), v2.max()],cmap='Blues', alpha=0.9)
+    plt.imshow(py, extent=[v1.min(), v1.max(), v2.min(), v2.max()], cmap='Blues', alpha=0.9)
     plt.colorbar()
-    plt.savefig('%s/2d_grid_density_pre.png'%path.rstrip('/'))
+    plt.savefig('images/2d_grid_density_pre_{}.png'.format(args.data))
     plt.close()    
 
 if __name__ == '__main__':
@@ -102,9 +108,11 @@ if __name__ == '__main__':
     xs = sampler.Gaussian_sampler_(mean=np.zeros(args.dx),sd=1.0, batch_size = args.N)
 
     if args.data == 'indep_gmm':
+        best_sd, best_scale = 0.05, 0.5
         ys = sampler.GMM_indep_sampler_(sd=0.1, dim=args.dy, n_components=3, bound=1, batch_size=args.N)
             
     elif args.data == "eight_octagon_gmm":
+        best_sd, best_scale = 0.1, 0.5
         n_components = 8
         def cal_cov(theta,sx=1,sy=0.4**2):
             Scale = np.array([[sx, 0], [0, sy]])
@@ -122,16 +130,13 @@ if __name__ == '__main__':
     
     y_point = torch.Tensor(ys.sample()[0])
     
-    IS = ImportanceSampling(g_net, h_net, y_point, dx = args.dx, dy = args.dy, N=args.N)
+    IS = ImportanceSampling(g_net, h_net, y_point, dx = args.dx, dy = args.dy, sd_y=best_sd, scale=best_scale, N=args.N)
 
     evaluate = IS.evaluate()
+    print(evaluate)
 
     if args.data == "indep_gmm":
-        a, b, c = create_2d_grid_data(-1.5, 1.5, -1.5, 1.5, 10)
-        print(a)
-        print(b)
-        print(c)
+        visualization_2d(-1.5, 1.5, -1.5, 1.5, 0.05, 0.5)
     elif args.data == "eight_octagon_gmm":
         visualization_2d(-5, 5, -5, 5, 0.1, 0.5)
-
-    print(evaluate)
+    
