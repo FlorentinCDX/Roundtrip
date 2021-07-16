@@ -74,8 +74,7 @@ class Discriminator_img(nn.Module):
             *discriminator_block(channels, 16, bn=False),
             *discriminator_block(16, 32),
             *discriminator_block(32, 64),
-            *discriminator_block(64, 128),
-        )
+            *discriminator_block(64, 128))
 
         # The height and width of downsampled image
         ds_size = img_size // 2 ** 4
@@ -163,44 +162,6 @@ class Discriminator_(nn.Module):
         validity = self.model(img)
 
         return validity
-
-class Discriminator(nn.Module):
-    def __init__(self, input_dim, nb_layers=2, nb_units=256):
-        super(Discriminator, self).__init__()
-        self.input_dim = input_dim
-        self.layers = nn.ModuleList() 
-        self.layers += [nn.Linear(input_dim, nb_units), 
-                 nn.LeakyReLU()]
-
-        for i in range(1, nb_layers-1):
-            self.layers += [nn.Linear(nb_units, nb_units),
-                            nn.BatchNorm1d(1),
-                            nn.Tanh()]
-        self.layers += [nn.Linear(nb_units, 1)]
-
-        self.model = nn.Sequential(*self.layers)
-
-    def forward(self, x):
-        out = self.model(x)
-        return out 
-
-class Generator(nn.Module):
-    def __init__(self, input_dim, output_dim, nb_layers=2, nb_units=256):
-        super(Generator, self).__init__()
-        self.layers = nn.ModuleList() 
-        self.layers += [nn.Linear(input_dim, nb_units), 
-                 nn.LeakyReLU()]
-
-        for i in range(1, nb_layers-1):
-            self.layers += [nn.Linear(nb_units, nb_units),
-                            nn.LeakyReLU()]
-        self.layers += [nn.Linear(nb_units, output_dim)]
-
-        self.model = nn.Sequential(*self.layers)
-
-    def forward(self, x):
-        out = self.model(x)
-        return out 
 
 class ResNet(nn.Module):
     def __init__(self, module):

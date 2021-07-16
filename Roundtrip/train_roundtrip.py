@@ -8,6 +8,7 @@ import sys, os
 import argparse
 import time
 import sampler
+import copy
 
 class RoundtripModel(object):
     """
@@ -35,6 +36,7 @@ class RoundtripModel(object):
         self.alpha = alpha
         self.beta = beta
         self.device = device
+        self.batch_size = 128
 
         self.g_h_optim = torch.optim.Adam(list(self.g_net.parameters()) + list(self.h_net.parameters()), \
                                 lr = 2e-4, betas = (0.5, 0.9))
@@ -56,7 +58,7 @@ class RoundtripModel(object):
         dy_loss = (torch.mean((0.9*torch.ones_like(dy) - dy)**2) \
                         +torch.mean((0.1*torch.ones_like(d_fake_y) - d_fake_y)**2))/2.0
         d_loss = dx_loss + dy_loss
-        return d_loss
+        return dx_loss, dy_loss, d_loss
     
     def generators_loss(self, x, y):
         y_ = self.g_net(x)
@@ -78,32 +80,46 @@ class RoundtripModel(object):
         g_loss = g_loss_adv + self.alpha*l2_loss_x + self.beta*l2_loss_y
         h_loss = h_loss_adv + self.alpha*l2_loss_x + self.beta*l2_loss_y
         g_h_loss = g_loss_adv + h_loss_adv + self.alpha*l2_loss_x + self.beta*l2_loss_y
-        return g_h_loss
+        return g_loss, h_loss, g_h_loss
         
     def train(self, epochs, cv_epoch):
+        data_y_train = copy.copy(self.y_sampler.X_train)
+        data_y_test = self.y_sampler.X_test
+        data_y_val = self.y_sampler.X_val
+        
         for epoch in range(epochs):
+            np.random.shuffle(data_y_train)
+            batch_idxs = len(data_y_train) // self.batch_size
             start_time = time.time()
+            for idx in range(batch_idxs):
+                bx = self.x_sampler.get_batch(self.batch_size)
+                by = data_y_train[self.batch_size*idx:self.batch_size*(idx+1)]
+                self.g_h_optim.zero_grad()
+                self.d_optim.zero_grad()
 
-            self.g_h_optim.zero_grad()
-            self.d_optim.zero_grad()
+                x = torch.Tensor(bx).to(self.device)
+                y = torch.Tensor(by).to(self.device)
 
-            x = torch.Tensor(self.x_sampler.sample()).to(self.device)
-            y = torch.Tensor(self.y_sampler.sample()).to(self.device)
+                dx_loss, dy_loss, d_loss = self.discriminators_loss(x, y)
+                g_loss, h_loss, g_h_loss = self.generators_loss(x, y)
 
-            d_loss = self.discriminators_loss(x, y)
-            g_h_loss = self.generators_loss(x, y)
+                d_loss.backward()
+                g_h_loss.backward()
+                self.g_h_optim.step()
+                self.d_optim.step()
 
-            d_loss.backward()
-            g_h_loss.backward()
-            self.g_h_optim.step()
-            self.d_optim.step()
-
-            if epoch % 100 == 0 :
-                print('Epoch [%d] Time [%5.4f] g_h_loss [%.4f] d_loss [%.4f]' %
-                        (epoch, time.time() - start_time, g_h_loss, d_loss))
+            if epoch % 20 == 0 :
+                print('Epoch [%d] Time [%5.4f] g_h_loss [%.4f] d_loss [%.4f] dx_loss [%.4f] dy_loss [%.4f] g_loss [%.4f] h_loss [%.4f] ' %
+                        (epoch, time.time() - start_time, g_h_loss, d_loss, dx_loss, dy_loss, g_loss, h_loss))
             
             if epoch >= cv_epoch:
                 self.save()
+
+    def predict_y(self, x_point):
+        return self.g_net(x_point)
+    
+    def predict_x(self, y_point):
+        return self.h_net(y_point)
             
     def save(self):
         torch.save(self.g_net.state_dict(), 'model_saved/g_net_{}'.format(self.data))
@@ -124,9 +140,9 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='model',help='model path')
     parser.add_argument('--dx', type=int, default=10,help='dimension of latent space')
     parser.add_argument('--dy', type=int, default=10,help='dimension of data space')
-    parser.add_argument('--bs', type=int, default=1000,help='batch size for training')
-    parser.add_argument('--epochs', type=int, default=2000,help='maximum training epoches')
-    parser.add_argument('--cv_epoch', type=int, default=1800,help='epoch starting for evaluating')
+    parser.add_argument('--bs', type=int, default=20000,help='batch size for training')
+    parser.add_argument('--epochs', type=int, default=300,help='maximum training epoches')
+    parser.add_argument('--cv_epoch', type=int, default=280,help='epoch starting for evaluating')
     parser.add_argument('--alpha', type=float, default=10.0)
     parser.add_argument('--beta', type=float, default=10.0)
     parser.add_argument('--train', type=bool, default=False)
@@ -149,10 +165,10 @@ if __name__ == "__main__":
     dx_net = model.Discriminator_(inp_shape = x_dim, n_layers=2, n_units=128)
     dy_net = model.Discriminator_(inp_shape = y_dim, n_layers=4, n_units=256)
 
-    xs = sampler.Gaussian_sampler(mean=np.zeros(x_dim),sd=1.0)
+    xs = sampler.Gaussian_sampler(N=20000, mean=np.zeros(x_dim),sd=1.0)
 
     if data == 'indep_gmm':
-        ys = sampler.GMM_indep_sampler(sd=0.1, dim=y_dim, n_components=3, bound=1, batch_size=batch_size)
+        ys = sampler.GMM_indep_sampler(N=20000, sd=0.1, dim=y_dim, n_components=3, bound=1)
     
     elif data == "eight_octagon_gmm":
         n_components = 8
@@ -166,7 +182,11 @@ if __name__ == "__main__":
         radius = 3
         mean = np.array([[radius*math.cos(2*np.pi*idx/float(n_components)),radius*math.sin(2*np.pi*idx/float(n_components))] for idx in range(n_components)])
         cov = np.array([cal_cov(2*np.pi*idx/float(n_components)) for idx in range(n_components)])
-        ys = sampler.GMM_sampler(batch_size=batch_size,mean=mean,cov=cov)
+        ys = sampler.GMM_sampler(N=20000,mean=mean,cov=cov)
+    
+    elif data == "involute":
+        best_sd, best_scale = 0.4, 0.5
+        ys = sampler.Swiss_roll_sampler(N=20000)
 
     RTM = RoundtripModel(g_net, h_net, dx_net, dy_net, xs, data, ys, alpha, beta, device)
     RTM.train(epochs=epochs,cv_epoch=cv_epoch)
